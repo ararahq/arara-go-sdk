@@ -1,0 +1,275 @@
+// Package arara is the official Go SDK for the AraraHQ API.
+package arara
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"encoding/json"
+	"fmt"
+	"io"
+	"math"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+)
+
+const (
+	defaultBaseURL    = "https://api.ararahq.com"
+	defaultTimeout    = 10 * time.Second
+	defaultMaxRetries = 3
+
+	baseRetryDelay   = 500 * time.Millisecond
+	maxRetryDelay    = 30 * time.Second
+	rateLimitStatus  = 429
+	serverErrorFloor = 500
+)
+
+// Client is the root AraraHQ API client. Access resources through its public fields.
+type Client struct {
+	apiKey     string
+	baseURL    string
+	httpClient *http.Client
+	maxRetries int
+
+	Messages      *MessagesService
+	Templates     *TemplatesService
+	Users         *UsersService
+	Organizations *OrganizationsService
+	APIKeys       *APIKeysService
+	Contacts      *ContactsService
+	Conversations *ConversationsService
+	Wallet        *WalletService
+	Numbers       *NumbersService
+	SmartLinks    *SmartLinksService
+	Campaigns     *CampaignsService
+}
+
+// Option customizes a Client during construction.
+type Option func(*Client)
+
+// WithBaseURL overrides the default API base URL.
+func WithBaseURL(baseURL string) Option {
+	return func(c *Client) { c.baseURL = strings.TrimRight(baseURL, "/") }
+}
+
+// WithHTTPClient sets a custom HTTP client, taking full control of transport and timeout.
+func WithHTTPClient(hc *http.Client) Option {
+	return func(c *Client) { c.httpClient = hc }
+}
+
+// WithTimeout sets the per-request timeout of the default HTTP client.
+func WithTimeout(d time.Duration) Option {
+	return func(c *Client) {
+		if c.httpClient != nil {
+			c.httpClient.Timeout = d
+		}
+	}
+}
+
+// WithMaxRetries sets how many times 429/5xx/network failures are retried.
+func WithMaxRetries(n int) Option {
+	return func(c *Client) { c.maxRetries = n }
+}
+
+// NewClient builds a client authenticated with the given API key.
+func NewClient(apiKey string, opts ...Option) (*Client, error) {
+	if strings.TrimSpace(apiKey) == "" {
+		return nil, &Error{Code: "INVALID_CONFIG", Message: "apiKey is required to instantiate the client"}
+	}
+
+	c := &Client{
+		apiKey:     apiKey,
+		baseURL:    defaultBaseURL,
+		httpClient: &http.Client{Timeout: defaultTimeout},
+		maxRetries: defaultMaxRetries,
+	}
+	for _, opt := range opts {
+		opt(c)
+	}
+
+	c.Messages = &MessagesService{client: c}
+	c.Templates = &TemplatesService{client: c}
+	c.Users = &UsersService{client: c}
+	c.Organizations = &OrganizationsService{client: c}
+	c.APIKeys = &APIKeysService{client: c}
+	c.Contacts = &ContactsService{client: c}
+	c.Conversations = &ConversationsService{client: c}
+	c.Wallet = &WalletService{client: c}
+	c.Numbers = &NumbersService{client: c}
+	c.SmartLinks = &SmartLinksService{client: c}
+	c.Campaigns = &CampaignsService{client: c}
+	return c, nil
+}
+
+type request struct {
+	method  string
+	path    string
+	query   url.Values
+	body    any
+	headers map[string]string
+}
+
+func (c *Client) do(ctx context.Context, req request, out any) error {
+	var payload []byte
+	if req.body != nil {
+		encoded, err := json.Marshal(req.body)
+		if err != nil {
+			return &Error{Code: "ENCODE_ERROR", Message: fmt.Sprintf("failed to encode request body: %v", err)}
+		}
+		payload = encoded
+	}
+
+	endpoint := c.baseURL + req.path
+	if len(req.query) > 0 {
+		endpoint += "?" + req.query.Encode()
+	}
+
+	var lastErr error
+	for attempt := 0; attempt <= c.maxRetries; attempt++ {
+		if attempt > 0 {
+			delay := computeRetryDelay(attempt-1, retryAfterFromErr(lastErr))
+			select {
+			case <-ctx.Done():
+				return &Error{Code: "CONTEXT_CANCELED", Message: ctx.Err().Error()}
+			case <-time.After(delay):
+			}
+		}
+
+		var bodyReader io.Reader
+		if payload != nil {
+			bodyReader = bytes.NewReader(payload)
+		}
+		httpReq, err := http.NewRequestWithContext(ctx, req.method, endpoint, bodyReader)
+		if err != nil {
+			return &Error{Code: "REQUEST_ERROR", Message: err.Error()}
+		}
+		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+		httpReq.Header.Set("Accept", "application/json")
+		if payload != nil {
+			httpReq.Header.Set("Content-Type", "application/json")
+		}
+		for k, v := range req.headers {
+			httpReq.Header.Set(k, v)
+		}
+
+		resp, err := c.httpClient.Do(httpReq)
+		if err != nil {
+			lastErr = &Error{Code: "NETWORK_ERROR", Message: err.Error()}
+			continue
+		}
+
+		apiErr := decodeResponse(resp, out)
+		if apiErr == nil {
+			return nil
+		}
+		lastErr = apiErr
+		if !isRetryable(apiErr) {
+			return apiErr
+		}
+	}
+	return lastErr
+}
+
+func decodeResponse(resp *http.Response, out any) *Error {
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		if out == nil || resp.StatusCode == http.StatusNoContent || len(bytes.TrimSpace(raw)) == 0 {
+			return nil
+		}
+		if err := json.Unmarshal(raw, out); err != nil {
+			return &Error{StatusCode: resp.StatusCode, Code: "DECODE_ERROR", Message: fmt.Sprintf("failed to decode response: %v", err)}
+		}
+		return nil
+	}
+
+	apiErr := parseErrorEnvelope(raw)
+	apiErr.StatusCode = resp.StatusCode
+	if apiErr.Code == "" {
+		apiErr.Code = "UNKNOWN_ERROR"
+	}
+	if apiErr.Message == "" {
+		apiErr.Message = fmt.Sprintf("request failed with status %d", resp.StatusCode)
+	}
+	apiErr.RetryAfter = parseRetryAfter(resp.Header.Get("Retry-After"))
+	return apiErr
+}
+
+func parseErrorEnvelope(raw []byte) *Error {
+	var envelope struct {
+		Error struct {
+			Code    string         `json:"code"`
+			Message string         `json:"message"`
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return &Error{}
+	}
+	return &Error{
+		Code:    envelope.Error.Code,
+		Message: envelope.Error.Message,
+		Details: envelope.Error.Details,
+	}
+}
+
+func isRetryable(e *Error) bool {
+	if e.Code == "NETWORK_ERROR" {
+		return true
+	}
+	return e.StatusCode == rateLimitStatus || e.StatusCode >= serverErrorFloor
+}
+
+func retryAfterFromErr(err error) *int {
+	if e, ok := err.(*Error); ok {
+		return e.RetryAfter
+	}
+	return nil
+}
+
+func computeRetryDelay(attempt int, retryAfterSeconds *int) time.Duration {
+	if retryAfterSeconds != nil {
+		d := time.Duration(*retryAfterSeconds) * time.Second
+		if d > maxRetryDelay {
+			return maxRetryDelay
+		}
+		return d
+	}
+	backoff := time.Duration(float64(baseRetryDelay) * math.Pow(2, float64(attempt)))
+	if backoff > maxRetryDelay {
+		return maxRetryDelay
+	}
+	return backoff
+}
+
+func parseRetryAfter(header string) *int {
+	header = strings.TrimSpace(header)
+	if header == "" {
+		return nil
+	}
+	if seconds, err := strconv.Atoi(header); err == nil && seconds >= 0 {
+		return &seconds
+	}
+	if t, err := http.ParseTime(header); err == nil {
+		seconds := int(math.Ceil(time.Until(t).Seconds()))
+		if seconds < 0 {
+			seconds = 0
+		}
+		return &seconds
+	}
+	return nil
+}
+
+func newUUIDv4() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
