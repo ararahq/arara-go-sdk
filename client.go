@@ -34,6 +34,7 @@ type Client struct {
 	apiKey     string
 	baseURL    string
 	httpClient *http.Client
+	timeout    time.Duration
 	maxRetries int
 
 	Messages      *MessagesService
@@ -56,24 +57,21 @@ func WithBaseURL(baseURL string) Option {
 	return func(c *Client) { c.baseURL = strings.TrimRight(baseURL, "/") }
 }
 
-// WithHTTPClient sets a custom HTTP client, taking full control of transport and timeout.
+// WithHTTPClient sets a custom HTTP client. The SDK never mutates it: when WithTimeout is also
+// given, a shallow copy with that timeout is used instead.
 func WithHTTPClient(hc *http.Client) Option {
 	return func(c *Client) { c.httpClient = hc }
 }
 
-// WithTimeout sets the per-request timeout of the default HTTP client.
+// WithTimeout sets the per-request timeout, regardless of option order.
 func WithTimeout(d time.Duration) Option {
-	return func(c *Client) {
-		if c.httpClient != nil {
-			c.httpClient.Timeout = d
-		}
-	}
+	return func(c *Client) { c.timeout = d }
 }
 
 // WithMaxRetries sets how many times 429/5xx/network failures are retried. Only GET requests
 // and requests carrying an Idempotency-Key are ever retried.
 func WithMaxRetries(n int) Option {
-	return func(c *Client) { c.maxRetries = n }
+	return func(c *Client) { c.maxRetries = max(n, 0) }
 }
 
 // NewClient builds a client authenticated with the given API key.
@@ -85,12 +83,12 @@ func NewClient(apiKey string, opts ...Option) (*Client, error) {
 	c := &Client{
 		apiKey:     apiKey,
 		baseURL:    defaultBaseURL,
-		httpClient: &http.Client{Timeout: defaultTimeout},
 		maxRetries: defaultMaxRetries,
 	}
 	for _, opt := range opts {
 		opt(c)
 	}
+	c.httpClient = resolveHTTPClient(c.httpClient, c.timeout)
 
 	c.Messages = &MessagesService{client: c}
 	c.Templates = &TemplatesService{client: c}
@@ -103,6 +101,21 @@ func NewClient(apiKey string, opts ...Option) (*Client, error) {
 	c.SmartLinks = &SmartLinksService{client: c}
 	c.Campaigns = &CampaignsService{client: c}
 	return c, nil
+}
+
+func resolveHTTPClient(custom *http.Client, timeout time.Duration) *http.Client {
+	if custom == nil {
+		if timeout <= 0 {
+			timeout = defaultTimeout
+		}
+		return &http.Client{Timeout: timeout}
+	}
+	if timeout <= 0 {
+		return custom
+	}
+	cp := *custom
+	cp.Timeout = timeout
+	return &cp
 }
 
 type request struct {
@@ -118,7 +131,7 @@ func (c *Client) do(ctx context.Context, req request, out any) error {
 	if req.body != nil {
 		encoded, err := json.Marshal(req.body)
 		if err != nil {
-			return &APIError{Code: "ENCODE_ERROR", Message: fmt.Sprintf("failed to encode request body: %v", err)}
+			return &APIError{Code: "ENCODE_ERROR", Message: fmt.Sprintf("failed to encode request body: %v", err), Err: err}
 		}
 		payload = encoded
 	}
@@ -135,7 +148,7 @@ func (c *Client) do(ctx context.Context, req request, out any) error {
 			delay := computeRetryDelay(attempt-1, retryAfterFromErr(lastErr))
 			select {
 			case <-ctx.Done():
-				return &APIError{Code: "CONTEXT_CANCELED", Message: ctx.Err().Error()}
+				return contextError(ctx)
 			case <-time.After(delay):
 			}
 		}
@@ -146,7 +159,7 @@ func (c *Client) do(ctx context.Context, req request, out any) error {
 		}
 		httpReq, err := http.NewRequestWithContext(ctx, req.method, endpoint, bodyReader)
 		if err != nil {
-			return &APIError{Code: "REQUEST_ERROR", Message: err.Error()}
+			return &APIError{Code: "REQUEST_ERROR", Message: err.Error(), Err: err}
 		}
 		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 		httpReq.Header.Set("Accept", "application/json")
@@ -159,7 +172,10 @@ func (c *Client) do(ctx context.Context, req request, out any) error {
 
 		resp, err := c.httpClient.Do(httpReq)
 		if err != nil {
-			lastErr = &APIError{Code: codeNetwork, Message: err.Error()}
+			if ctx.Err() != nil {
+				return contextError(ctx)
+			}
+			lastErr = &APIError{Code: codeNetwork, Message: err.Error(), Err: err}
 			if !retrySafe {
 				return lastErr
 			}
@@ -175,7 +191,14 @@ func (c *Client) do(ctx context.Context, req request, out any) error {
 			return apiErr
 		}
 	}
+	if lastErr == nil {
+		return &APIError{Code: "NO_ATTEMPT", Message: "request was not attempted"}
+	}
 	return lastErr
+}
+
+func contextError(ctx context.Context) *APIError {
+	return &APIError{Code: codeContextCanceled, Message: ctx.Err().Error(), Err: ctx.Err()}
 }
 
 func decodeResponse(resp *http.Response, out any) *APIError {
@@ -223,17 +246,23 @@ func parseErrorEnvelope(raw []byte) *APIError {
 }
 
 func fallbackErrorCode(status int) string {
-	if status == http.StatusUnauthorized || status == http.StatusForbidden {
+	switch status {
+	case http.StatusUnauthorized:
 		return codeAuthentication
+	case http.StatusForbidden:
+		return codeForbidden
+	case http.StatusNotFound:
+		return codeNotFound
+	default:
+		return codeUnknown
 	}
-	return codeUnknown
 }
 
 func isRetrySafe(req request) bool {
 	if req.method == http.MethodGet || req.method == http.MethodHead {
 		return true
 	}
-	return req.headers[idempotencyKeyHeader] != ""
+	return strings.TrimSpace(req.headers[idempotencyKeyHeader]) != ""
 }
 
 func isRetryable(e *APIError) bool {

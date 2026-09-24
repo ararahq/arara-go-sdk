@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"strings"
 )
 
 const (
@@ -136,7 +137,7 @@ func (s *MessagesService) ListByBatch(ctx context.Context, batchID string) ([]Me
 func idempotencyHeaders(opts []SendOptions) map[string]string {
 	key := ""
 	if len(opts) > 0 {
-		key = opts[0].IdempotencyKey
+		key = strings.TrimSpace(opts[0].IdempotencyKey)
 	}
 	if key == "" {
 		key = newUUIDv4()

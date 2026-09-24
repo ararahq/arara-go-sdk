@@ -115,8 +115,8 @@ func TestShouldCallOptOutEndpoints(t *testing.T) {
 
 func TestShouldReturnErrorFromOptOuts(t *testing.T) {
 	_, c := newFakeServer(t, fakeResponse{status: http.StatusForbidden})
-	if _, err := c.OptOuts.List(bg); !IsAuthError(err) {
-		t.Fatalf("expected auth error, got %v", err)
+	if _, err := c.OptOuts.List(bg); !IsForbidden(err) {
+		t.Fatalf("expected forbidden, got %v", err)
 	}
 }
 

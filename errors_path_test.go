@@ -1,6 +1,7 @@
 package arara
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -139,11 +140,75 @@ func TestShouldParseRetryAfterHeader(t *testing.T) {
 	}
 }
 
-func TestShouldApplyClientOptions(t *testing.T) {
-	custom := &http.Client{}
+func TestShouldApplyTimeoutWithoutMutatingCallerClient(t *testing.T) {
+	custom := &http.Client{Timeout: time.Second}
 	c, _ := NewClient(testAPIKey, WithHTTPClient(custom), WithTimeout(3*time.Second), WithMaxRetries(1), WithBaseURL("http://x/"))
-	if c.httpClient != custom || custom.Timeout != 3*time.Second || c.maxRetries != 1 || c.baseURL != "http://x" {
+	if custom.Timeout != time.Second {
+		t.Fatalf("caller client was mutated: %v", custom.Timeout)
+	}
+	if c.httpClient == custom || c.httpClient.Timeout != 3*time.Second || c.maxRetries != 1 || c.baseURL != "http://x" {
 		t.Fatalf("options not applied: %+v", c)
+	}
+}
+
+func TestShouldApplyTimeoutInAnyOrder(t *testing.T) {
+	custom := &http.Client{Timeout: time.Second}
+	c, _ := NewClient(testAPIKey, WithTimeout(3*time.Second), WithHTTPClient(custom))
+	if c.httpClient.Timeout != 3*time.Second || custom.Timeout != time.Second {
+		t.Fatalf("timeout before custom client was lost: %v", c.httpClient.Timeout)
+	}
+}
+
+func TestShouldKeepCustomClientWithoutTimeoutOption(t *testing.T) {
+	custom := &http.Client{Timeout: time.Second}
+	c, _ := NewClient(testAPIKey, WithHTTPClient(custom))
+	if c.httpClient != custom {
+		t.Fatal("custom client must be used as-is")
+	}
+}
+
+func TestShouldUseTimeoutOnDefaultClient(t *testing.T) {
+	c, _ := NewClient(testAPIKey, WithTimeout(4*time.Second))
+	d, _ := NewClient(testAPIKey)
+	if c.httpClient.Timeout != 4*time.Second || d.httpClient.Timeout != defaultTimeout {
+		t.Fatalf("unexpected timeouts %v %v", c.httpClient.Timeout, d.httpClient.Timeout)
+	}
+}
+
+func TestShouldClampNegativeRetriesAndStillAttemptOnce(t *testing.T) {
+	fs, c := newFakeServer(t, ok(`{"id":"m1"}`))
+	c.maxRetries = 0
+	WithMaxRetries(-1)(c)
+	if c.maxRetries != 0 {
+		t.Fatalf("expected clamp to 0, got %d", c.maxRetries)
+	}
+	msg, err := c.Messages.Get(bg, "m1")
+	if err != nil || msg == nil || len(fs.requests) != 1 {
+		t.Fatalf("expected one attempt, got %+v %v", msg, err)
+	}
+}
+
+func TestShouldErrorWhenNoAttemptIsMade(t *testing.T) {
+	c, _ := NewClient(testAPIKey)
+	c.maxRetries = -1
+	_, err := c.Messages.Get(bg, "x")
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Code != "NO_ATTEMPT" {
+		t.Fatalf("expected NO_ATTEMPT, got %v", err)
+	}
+}
+
+func TestShouldUnwrapContextCancellationWithoutRetrying(t *testing.T) {
+	fs, c := newFakeServer(t)
+	ctx, cancel := contextWithCancel()
+	cancel()
+	_, err := c.Messages.Get(ctx, "x")
+	var apiErr *APIError
+	if !errors.Is(err, context.Canceled) || !errors.As(err, &apiErr) || apiErr.Code != "CONTEXT_CANCELED" {
+		t.Fatalf("expected unwrappable cancellation, got %v", err)
+	}
+	if len(fs.requests) != 0 {
+		t.Fatalf("canceled request must not be retried, got %d", len(fs.requests))
 	}
 }
 
@@ -156,7 +221,7 @@ func TestShouldStopRetryingWhenContextCanceled(t *testing.T) {
 	}()
 	_, err := c.Messages.Get(ctx, "x")
 	var apiErr *APIError
-	if !errors.As(err, &apiErr) || apiErr.Code != "CONTEXT_CANCELED" || len(fs.requests) != 1 {
+	if !errors.As(err, &apiErr) || apiErr.Code != "CONTEXT_CANCELED" || !errors.Is(err, context.Canceled) || len(fs.requests) != 1 {
 		t.Fatalf("expected cancellation after 1 attempt, got %v (%d)", err, len(fs.requests))
 	}
 }

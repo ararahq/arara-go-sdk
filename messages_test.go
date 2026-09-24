@@ -105,3 +105,23 @@ func TestShouldListMessagesByBatch(t *testing.T) {
 		t.Fatalf("unexpected query %q or response %+v", req.Query, resp)
 	}
 }
+
+func TestShouldGenerateKeyWhenCallerKeyIsBlank(t *testing.T) {
+	fs, c := newFakeServer(t, serverError(), fakeResponse{status: http.StatusAccepted, body: `{"id":"m1"}`})
+	if _, err := c.Messages.Send(bg, &SendMessageRequest{Receiver: "5511999998888", Body: "oi"}, SendOptions{IdempotencyKey: "   "}); err != nil {
+		t.Fatal(err)
+	}
+	key := fs.requests[0].Header.Get("Idempotency-Key")
+	if !uuidV4Pattern.MatchString(key) || fs.requests[1].Header.Get("Idempotency-Key") != key {
+		t.Fatalf("blank key must be replaced by a stable uuid, got %q / %q", key, fs.requests[1].Header.Get("Idempotency-Key"))
+	}
+}
+
+func TestShouldNotTreatBlankHeaderAsRetrySafe(t *testing.T) {
+	if isRetrySafe(request{method: http.MethodPost, headers: map[string]string{"Idempotency-Key": "  "}}) {
+		t.Fatal("blank Idempotency-Key must not make a POST retry-safe")
+	}
+	if !isRetrySafe(request{method: http.MethodPost, headers: map[string]string{"Idempotency-Key": "k"}}) {
+		t.Fatal("POST with key must be retry-safe")
+	}
+}

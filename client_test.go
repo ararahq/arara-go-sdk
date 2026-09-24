@@ -81,18 +81,28 @@ func TestShouldMapPlanFeatureLocked(t *testing.T) {
 	}
 }
 
-func TestShouldMapForbiddenWithoutEnvelopeToAuthError(t *testing.T) {
+func TestShouldMapEmptyForbiddenToAmbiguousForbidden(t *testing.T) {
 	_, c := newFakeServer(t, fakeResponse{status: http.StatusForbidden, body: ``})
-	_, err := c.Auth.Me(bg)
-	if !IsAuthError(err) || IsPlanFeatureLocked(err) {
-		t.Fatalf("expected auth error, got %v", err)
+	_, err := c.Messages.Get(bg, "other-org-message")
+	if !IsForbidden(err) || IsAuthError(err) || IsPlanFeatureLocked(err) || IsNotFound(err) {
+		t.Fatalf("expected ambiguous FORBIDDEN, got %v", err)
+	}
+}
+
+func TestShouldMapEmptyNotFoundToNotFound(t *testing.T) {
+	_, c := newFakeServer(t, fakeResponse{status: http.StatusNotFound, body: ``})
+	_, err := c.Messages.Get(bg, "missing")
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Code != "NOT_FOUND" || !IsNotFound(err) || IsForbidden(err) {
+		t.Fatalf("expected NOT_FOUND, got %v", err)
 	}
 }
 
 func TestShouldMapUnauthorizedToAuthError(t *testing.T) {
 	_, c := newFakeServer(t, fakeResponse{status: http.StatusUnauthorized, body: `{"status":401}`})
 	_, err := c.Auth.Me(bg)
-	if !IsAuthError(err) {
+	var apiErr *APIError
+	if !IsAuthError(err) || !errors.As(err, &apiErr) || apiErr.Code != "AUTHENTICATION_ERROR" {
 		t.Fatalf("expected auth error, got %v", err)
 	}
 }
