@@ -64,7 +64,7 @@ func TestShouldCallCampaignReadEndpoints(t *testing.T) {
 		ok(`{"totalCost":1.5,"recipientCount":3}`),
 		fakeResponse{status: http.StatusOK},
 	)
-	list, err := c.Campaigns.List(bg, 0, 0, "RUNNING")
+	list, err := c.Campaigns.List(bg, CampaignListParams{Status: "RUNNING"})
 	if err != nil || len(list.Content) != 1 || list.TotalElements != 1 {
 		t.Fatalf("list %+v %v", list, err)
 	}

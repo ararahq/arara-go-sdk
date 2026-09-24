@@ -43,7 +43,7 @@ func TestShouldReturnAPIErrorFromEveryResourceMethod(t *testing.T) {
 		},
 		"SmartLinks.Stats":       func() error { _, err := c.SmartLinks.Stats(bg, "x"); return err },
 		"Campaigns.Create":       func() error { _, err := c.Campaigns.Create(bg, &CampaignRequest{}); return err },
-		"Campaigns.List":         func() error { _, err := c.Campaigns.List(bg, 0, 0, ""); return err },
+		"Campaigns.List":         func() error { _, err := c.Campaigns.List(bg, CampaignListParams{}); return err },
 		"Campaigns.Estimate":     func() error { _, err := c.Campaigns.Estimate(bg, "t", 1); return err },
 		"Campaigns.Get":          func() error { _, err := c.Campaigns.Get(bg, "x"); return err },
 		"Contacts.List":          func() error { _, err := c.Contacts.List(bg, ContactListParams{}); return err },

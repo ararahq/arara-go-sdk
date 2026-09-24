@@ -7,6 +7,18 @@ import (
 	"strconv"
 )
 
+const (
+	campaignsBase            = "/v1/campaigns"
+	defaultCampaignsPageSize = 20
+)
+
+// CampaignListParams are the optional filters for listing campaigns.
+type CampaignListParams struct {
+	Page   int
+	Size   int
+	Status string
+}
+
 // CampaignsService handles the /v1/campaigns resource.
 type CampaignsService struct {
 	client *Client
@@ -120,7 +132,7 @@ func (s *CampaignsService) Create(ctx context.Context, req *CampaignRequest, opt
 	var out CampaignResponse
 	err := s.client.do(ctx, request{
 		method:  http.MethodPost,
-		path:    "/v1/campaigns",
+		path:    campaignsBase,
 		body:    req,
 		headers: idempotencyHeaders(sendOpts),
 	}, &out)
@@ -131,16 +143,13 @@ func (s *CampaignsService) Create(ctx context.Context, req *CampaignRequest, opt
 }
 
 // List lists campaigns. GET /v1/campaigns
-func (s *CampaignsService) List(ctx context.Context, page, size int, status string) (*CampaignListResponse, error) {
-	q := url.Values{
-		"page": {strconv.Itoa(page)},
-		"size": {strconv.Itoa(defaultSize(size, 20))},
-	}
-	if status != "" {
-		q.Set("status", status)
+func (s *CampaignsService) List(ctx context.Context, params CampaignListParams) (*CampaignListResponse, error) {
+	q := PageParams{Page: params.Page, Size: params.Size}.values(defaultCampaignsPageSize)
+	if params.Status != "" {
+		q.Set("status", params.Status)
 	}
 	var out CampaignListResponse
-	err := s.client.do(ctx, request{method: http.MethodGet, path: "/v1/campaigns", query: q}, &out)
+	err := s.client.do(ctx, request{method: http.MethodGet, path: campaignsBase, query: q}, &out)
 	if err != nil {
 		return nil, err
 	}
@@ -154,7 +163,7 @@ func (s *CampaignsService) Estimate(ctx context.Context, templateName string, co
 		"count":        {strconv.Itoa(count)},
 	}
 	var out CampaignEstimateResponse
-	err := s.client.do(ctx, request{method: http.MethodGet, path: "/v1/campaigns/estimate", query: q}, &out)
+	err := s.client.do(ctx, request{method: http.MethodGet, path: campaignsBase + "/estimate", query: q}, &out)
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +173,7 @@ func (s *CampaignsService) Estimate(ctx context.Context, templateName string, co
 // Get retrieves a campaign by id. GET /v1/campaigns/{id}
 func (s *CampaignsService) Get(ctx context.Context, id string) (*CampaignDetailResponse, error) {
 	var out CampaignDetailResponse
-	err := s.client.do(ctx, request{method: http.MethodGet, path: "/v1/campaigns/" + url.PathEscape(id)}, &out)
+	err := s.client.do(ctx, request{method: http.MethodGet, path: campaignsBase + "/" + url.PathEscape(id)}, &out)
 	if err != nil {
 		return nil, err
 	}
@@ -173,5 +182,5 @@ func (s *CampaignsService) Get(ctx context.Context, id string) (*CampaignDetailR
 
 // Cancel cancels a campaign. POST /v1/campaigns/{id}/cancel
 func (s *CampaignsService) Cancel(ctx context.Context, id string) error {
-	return s.client.do(ctx, request{method: http.MethodPost, path: "/v1/campaigns/" + url.PathEscape(id) + "/cancel"}, nil)
+	return s.client.do(ctx, request{method: http.MethodPost, path: campaignsBase + "/" + url.PathEscape(id) + "/cancel"}, nil)
 }
