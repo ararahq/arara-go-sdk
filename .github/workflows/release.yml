@@ -1,0 +1,57 @@
+name: release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+      - name: vet
+        run: go vet ./...
+      - name: test
+        run: go test ./... -cover
+      - name: Read version
+        id: version
+        run: |
+          version=$(sed -n 's/^const Version = "\(.*\)"$/\1/p' version.go)
+          if [ -z "$version" ]; then echo "Version constant not found in version.go" && exit 1; fi
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+      - name: Check tag
+        id: tag
+        run: |
+          if git rev-parse -q --verify "refs/tags/${{ steps.version.outputs.tag }}" >/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Create tag and release
+        if: steps.tag.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ steps.version.outputs.tag }}" --target "$GITHUB_SHA" --title "${{ steps.version.outputs.tag }}" --generate-notes
+      - name: Index on proxy.golang.org
+        if: steps.tag.outputs.exists == 'false'
+        env:
+          GOPROXY: proxy.golang.org
+          GOFLAGS: -mod=mod
+        run: |
+          cd "$(mktemp -d)"
+          go list -m "github.com/ararahq/arara-go-sdk@${{ steps.version.outputs.tag }}"
