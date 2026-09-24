@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -25,6 +26,7 @@ const (
 	maxRetryDelay    = 30 * time.Second
 	rateLimitStatus  = 429
 	serverErrorFloor = 500
+	uuidByteLength   = 16
 )
 
 // Client is the root AraraHQ API client. Access resources through its public fields.
@@ -36,9 +38,8 @@ type Client struct {
 
 	Messages      *MessagesService
 	Templates     *TemplatesService
-	Users         *UsersService
-	Organizations *OrganizationsService
-	APIKeys       *APIKeysService
+	Auth          *AuthService
+	OptOuts       *OptOutsService
 	Contacts      *ContactsService
 	Conversations *ConversationsService
 	Wallet        *WalletService
@@ -69,7 +70,8 @@ func WithTimeout(d time.Duration) Option {
 	}
 }
 
-// WithMaxRetries sets how many times 429/5xx/network failures are retried.
+// WithMaxRetries sets how many times 429/5xx/network failures are retried. Only GET requests
+// and requests carrying an Idempotency-Key are ever retried.
 func WithMaxRetries(n int) Option {
 	return func(c *Client) { c.maxRetries = n }
 }
@@ -77,7 +79,7 @@ func WithMaxRetries(n int) Option {
 // NewClient builds a client authenticated with the given API key.
 func NewClient(apiKey string, opts ...Option) (*Client, error) {
 	if strings.TrimSpace(apiKey) == "" {
-		return nil, &Error{Code: "INVALID_CONFIG", Message: "apiKey is required to instantiate the client"}
+		return nil, &APIError{Code: "INVALID_CONFIG", Message: "apiKey is required to instantiate the client"}
 	}
 
 	c := &Client{
@@ -92,9 +94,8 @@ func NewClient(apiKey string, opts ...Option) (*Client, error) {
 
 	c.Messages = &MessagesService{client: c}
 	c.Templates = &TemplatesService{client: c}
-	c.Users = &UsersService{client: c}
-	c.Organizations = &OrganizationsService{client: c}
-	c.APIKeys = &APIKeysService{client: c}
+	c.Auth = &AuthService{client: c}
+	c.OptOuts = &OptOutsService{client: c}
 	c.Contacts = &ContactsService{client: c}
 	c.Conversations = &ConversationsService{client: c}
 	c.Wallet = &WalletService{client: c}
@@ -117,7 +118,7 @@ func (c *Client) do(ctx context.Context, req request, out any) error {
 	if req.body != nil {
 		encoded, err := json.Marshal(req.body)
 		if err != nil {
-			return &Error{Code: "ENCODE_ERROR", Message: fmt.Sprintf("failed to encode request body: %v", err)}
+			return &APIError{Code: "ENCODE_ERROR", Message: fmt.Sprintf("failed to encode request body: %v", err)}
 		}
 		payload = encoded
 	}
@@ -127,13 +128,14 @@ func (c *Client) do(ctx context.Context, req request, out any) error {
 		endpoint += "?" + req.query.Encode()
 	}
 
+	retrySafe := isRetrySafe(req)
 	var lastErr error
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
 		if attempt > 0 {
 			delay := computeRetryDelay(attempt-1, retryAfterFromErr(lastErr))
 			select {
 			case <-ctx.Done():
-				return &Error{Code: "CONTEXT_CANCELED", Message: ctx.Err().Error()}
+				return &APIError{Code: "CONTEXT_CANCELED", Message: ctx.Err().Error()}
 			case <-time.After(delay):
 			}
 		}
@@ -144,7 +146,7 @@ func (c *Client) do(ctx context.Context, req request, out any) error {
 		}
 		httpReq, err := http.NewRequestWithContext(ctx, req.method, endpoint, bodyReader)
 		if err != nil {
-			return &Error{Code: "REQUEST_ERROR", Message: err.Error()}
+			return &APIError{Code: "REQUEST_ERROR", Message: err.Error()}
 		}
 		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 		httpReq.Header.Set("Accept", "application/json")
@@ -157,7 +159,10 @@ func (c *Client) do(ctx context.Context, req request, out any) error {
 
 		resp, err := c.httpClient.Do(httpReq)
 		if err != nil {
-			lastErr = &Error{Code: "NETWORK_ERROR", Message: err.Error()}
+			lastErr = &APIError{Code: codeNetwork, Message: err.Error()}
+			if !retrySafe {
+				return lastErr
+			}
 			continue
 		}
 
@@ -166,14 +171,14 @@ func (c *Client) do(ctx context.Context, req request, out any) error {
 			return nil
 		}
 		lastErr = apiErr
-		if !isRetryable(apiErr) {
+		if !retrySafe || !isRetryable(apiErr) {
 			return apiErr
 		}
 	}
 	return lastErr
 }
 
-func decodeResponse(resp *http.Response, out any) *Error {
+func decodeResponse(resp *http.Response, out any) *APIError {
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
 
@@ -182,7 +187,7 @@ func decodeResponse(resp *http.Response, out any) *Error {
 			return nil
 		}
 		if err := json.Unmarshal(raw, out); err != nil {
-			return &Error{StatusCode: resp.StatusCode, Code: "DECODE_ERROR", Message: fmt.Sprintf("failed to decode response: %v", err)}
+			return &APIError{StatusCode: resp.StatusCode, Code: "DECODE_ERROR", Message: fmt.Sprintf("failed to decode response: %v", err)}
 		}
 		return nil
 	}
@@ -190,7 +195,7 @@ func decodeResponse(resp *http.Response, out any) *Error {
 	apiErr := parseErrorEnvelope(raw)
 	apiErr.StatusCode = resp.StatusCode
 	if apiErr.Code == "" {
-		apiErr.Code = "UNKNOWN_ERROR"
+		apiErr.Code = fallbackErrorCode(resp.StatusCode)
 	}
 	if apiErr.Message == "" {
 		apiErr.Message = fmt.Sprintf("request failed with status %d", resp.StatusCode)
@@ -199,7 +204,7 @@ func decodeResponse(resp *http.Response, out any) *Error {
 	return apiErr
 }
 
-func parseErrorEnvelope(raw []byte) *Error {
+func parseErrorEnvelope(raw []byte) *APIError {
 	var envelope struct {
 		Error struct {
 			Code    string         `json:"code"`
@@ -208,25 +213,40 @@ func parseErrorEnvelope(raw []byte) *Error {
 		} `json:"error"`
 	}
 	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return &Error{}
+		return &APIError{}
 	}
-	return &Error{
+	return &APIError{
 		Code:    envelope.Error.Code,
 		Message: envelope.Error.Message,
 		Details: envelope.Error.Details,
 	}
 }
 
-func isRetryable(e *Error) bool {
-	if e.Code == "NETWORK_ERROR" {
+func fallbackErrorCode(status int) string {
+	if status == http.StatusUnauthorized || status == http.StatusForbidden {
+		return codeAuthentication
+	}
+	return codeUnknown
+}
+
+func isRetrySafe(req request) bool {
+	if req.method == http.MethodGet || req.method == http.MethodHead {
+		return true
+	}
+	return req.headers[idempotencyKeyHeader] != ""
+}
+
+func isRetryable(e *APIError) bool {
+	if e.Code == codeNetwork {
 		return true
 	}
 	return e.StatusCode == rateLimitStatus || e.StatusCode >= serverErrorFloor
 }
 
 func retryAfterFromErr(err error) *int {
-	if e, ok := err.(*Error); ok {
-		return e.RetryAfter
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.RetryAfter
 	}
 	return nil
 }
@@ -265,9 +285,9 @@ func parseRetryAfter(header string) *int {
 }
 
 func newUUIDv4() string {
-	b := make([]byte, 16)
+	b := make([]byte, uuidByteLength)
 	if _, err := rand.Read(b); err != nil {
-		return fmt.Sprintf("%d", time.Now().UnixNano())
+		panic(fmt.Sprintf("arara: crypto/rand unavailable: %v", err))
 	}
 	b[6] = (b[6] & 0x0f) | 0x40
 	b[8] = (b[8] & 0x3f) | 0x80
