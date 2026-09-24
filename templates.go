@@ -2,6 +2,7 @@ package arara
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/url"
 )
@@ -34,20 +35,26 @@ type CreateTemplateRequest struct {
 	VariableExamples []string         `json:"variableExamples,omitempty"`
 }
 
-// Template is a WhatsApp message template.
+// Template is a WhatsApp message template, mirroring the API's TemplateResponse.
 type Template struct {
-	ID              string   `json:"id"`
-	Name            string   `json:"name"`
-	FormattedName   string   `json:"formattedName"`
-	Category        string   `json:"category"`
-	Language        string   `json:"language"`
-	Body            string   `json:"body"`
-	Samples         []string `json:"samples"`
-	ButtonsConfig   []any    `json:"buttonsConfig"`
-	ProviderStatus  string   `json:"providerStatus"`
-	RejectionReason *string  `json:"rejectionReason"`
-	CreatedAt       string   `json:"createdAt"`
-	UpdatedAt       *string  `json:"updatedAt"`
+	ID                  string            `json:"id"`
+	Name                string            `json:"name"`
+	FormattedName       string            `json:"formattedName"`
+	Category            string            `json:"category"`
+	OriginalCategory    *string           `json:"originalCategory"`
+	Language            string            `json:"language"`
+	ProviderName        string            `json:"providerName"`
+	ProviderTemplateID  string            `json:"providerTemplateId"`
+	ProviderStatus      string            `json:"providerStatus"`
+	RejectionReason     *string           `json:"rejectionReason"`
+	AvailableForSending bool              `json:"availableForSending"`
+	UnavailableReason   *string           `json:"unavailableReason"`
+	BodyPreview         *string           `json:"bodyPreview"`
+	StructureJSON       json.RawMessage   `json:"structureJson"`
+	UsageGuide          map[string]any    `json:"usageGuide"`
+	VariablesSchema     map[string]string `json:"variablesSchema"`
+	CreatedAt           string            `json:"createdAt"`
+	UpdatedAt           *string           `json:"updatedAt"`
 }
 
 // TemplateResponse is the response for a created template.
@@ -60,7 +67,7 @@ type TemplateResponse struct {
 type TemplateStatus struct {
 	Status          string  `json:"status"`
 	RejectionReason *string `json:"rejectionReason"`
-	Category        string  `json:"category"`
+	Category        *string `json:"category"`
 }
 
 // TemplateListParams are the optional filters for listing templates.

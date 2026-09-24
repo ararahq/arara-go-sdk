@@ -114,3 +114,29 @@ func TestShouldFetchTemplateAnalytics(t *testing.T) {
 		t.Fatalf("unexpected query %q", fs.requests[1].Query)
 	}
 }
+
+func TestShouldDecodeRealTemplatePayload(t *testing.T) {
+	payload := `{"id":"` + templateID + `","name":"boas_vindas","formattedName":"boas_vindas","category":"UTILITY","originalCategory":"MARKETING","language":"pt_BR","providerName":"GUPSHUP","providerTemplateId":"gs-1","providerStatus":"APPROVED","rejectionReason":null,"availableForSending":false,"unavailableReason":"WABA_CHANGED","bodyPreview":"Oi {{1}}","structureJson":{"body":"Oi {{1}}"},"usageGuide":{"tip":"x"},"variablesSchema":{"1":"nome"},"createdAt":"2026-09-24T10:00:00Z","updatedAt":null}`
+	_, c := newFakeServer(t, ok(payload))
+	tpl, err := c.Templates.Get(bg, templateID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tpl.AvailableForSending || tpl.UnavailableReason == nil || *tpl.UnavailableReason != "WABA_CHANGED" {
+		t.Fatalf("availability not decoded: %+v", tpl)
+	}
+	if tpl.OriginalCategory == nil || *tpl.OriginalCategory != "MARKETING" || tpl.ProviderName != "GUPSHUP" || tpl.ProviderTemplateID != "gs-1" {
+		t.Fatalf("provider fields not decoded: %+v", tpl)
+	}
+	if tpl.BodyPreview == nil || *tpl.BodyPreview != "Oi {{1}}" || tpl.VariablesSchema["1"] != "nome" || !strings.Contains(string(tpl.StructureJSON), "body") {
+		t.Fatalf("structure fields not decoded: %+v", tpl)
+	}
+}
+
+func TestShouldDecodeNullTemplateStatusCategory(t *testing.T) {
+	_, c := newFakeServer(t, ok(`{"status":"PENDING","rejectionReason":null,"category":null}`))
+	st, err := c.Templates.GetStatus(bg, templateID)
+	if err != nil || st.Category != nil || st.Status != "PENDING" {
+		t.Fatalf("unexpected %+v %v", st, err)
+	}
+}
