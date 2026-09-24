@@ -18,8 +18,11 @@ func TestShouldReturnAPIErrorFromEveryResourceMethod(t *testing.T) {
 	t.Cleanup(srv.Close)
 	c, _ := NewClient(testAPIKey, WithBaseURL(srv.URL))
 	calls := map[string]func() error{
-		"Messages.Send":        func() error { _, err := c.Messages.Send(bg, &SendMessageRequest{}); return err },
-		"Messages.SendBatch":   func() error { _, err := c.Messages.SendBatch(bg, &BatchMessageRequest{}); return err },
+		"Messages.Send": func() error { _, err := c.Messages.Send(bg, &SendMessageRequest{}); return err },
+		"Messages.SendBatch": func() error {
+			_, err := c.Messages.SendBatch(bg, &BatchMessageRequest{TemplateName: "t", Messages: []BatchMessageItem{{Receiver: "1"}}})
+			return err
+		},
 		"Messages.Get":         func() error { _, err := c.Messages.Get(bg, "x"); return err },
 		"Messages.ListByBatch": func() error { _, err := c.Messages.ListByBatch(bg, "x"); return err },
 		"Templates.List":       func() error { _, err := c.Templates.List(bg, TemplateListParams{}); return err },

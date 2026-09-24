@@ -14,6 +14,7 @@ const (
 	codeForbidden         = "FORBIDDEN"
 	codeNotFound          = "NOT_FOUND"
 	codeContextCanceled   = "CONTEXT_CANCELED"
+	codeInvalidRequest    = "INVALID_REQUEST"
 )
 
 // APIError is the typed error returned for every non-2xx response and transport failure.

@@ -31,12 +31,56 @@ type SendMessageRequest struct {
 	SmartLinkURL      string         `json:"smartLinkUrl,omitempty"`
 	Body              string         `json:"body,omitempty"`
 	Interactive       map[string]any `json:"interactive,omitempty"`
+	Charge            *ChargePayload `json:"charge,omitempty"`
 	Location          map[string]any `json:"location,omitempty"`
 	Reaction          map[string]any `json:"reaction,omitempty"`
 	ReplyTo           string         `json:"replyTo,omitempty"`
 	ScheduledAt       string         `json:"scheduled_at,omitempty"`
 	Mode              string         `json:"mode,omitempty"`
-	MediaURL          string         `json:"media_url,omitempty"`
+	// Deprecated: the API removes media_url on 2027-01-01. Use a template with a media header.
+	MediaURL string `json:"media_url,omitempty"`
+}
+
+// ChargePayload is a payment card sent in the conversation. Amounts are in cents and exactly
+// one payment method (Pix, PaymentLink or Boleto) is expected.
+type ChargePayload struct {
+	ReferenceID   string         `json:"referenceId"`
+	Items         []ChargeItem   `json:"items"`
+	Pix           *PixPayment    `json:"pix,omitempty"`
+	PaymentLink   *PaymentLink   `json:"paymentLink,omitempty"`
+	Boleto        *BoletoPayment `json:"boleto,omitempty"`
+	ShippingCents int64          `json:"shippingCents,omitempty"`
+	DiscountCents int64          `json:"discountCents,omitempty"`
+	// ExpiresAt is epoch seconds; Meta requires at least 5 minutes ahead.
+	ExpiresAt *int64 `json:"expiresAt,omitempty"`
+	ImageURL  string `json:"imageUrl,omitempty"`
+}
+
+// ChargeItem is a line of a charge.
+type ChargeItem struct {
+	Name        string `json:"name"`
+	AmountCents int64  `json:"amountCents"`
+	Quantity    int    `json:"quantity,omitempty"`
+	ID          string `json:"id,omitempty"`
+	ImageURL    string `json:"imageUrl,omitempty"`
+}
+
+// PixPayment is a Pix payment method. KeyType is one of CPF, CNPJ, EMAIL, PHONE or EVP.
+type PixPayment struct {
+	Code         string `json:"code"`
+	Key          string `json:"key"`
+	KeyType      string `json:"keyType"`
+	MerchantName string `json:"merchantName"`
+}
+
+// PaymentLink is a hosted payment link.
+type PaymentLink struct {
+	URL string `json:"url"`
+}
+
+// BoletoPayment is a boleto payment method.
+type BoletoPayment struct {
+	DigitableLine string `json:"digitableLine"`
 }
 
 // SendOptions carries per-call options for sending messages.
@@ -48,7 +92,7 @@ type SendOptions struct {
 
 // MessageResponse is a message as returned by the API.
 type MessageResponse struct {
-	ID       string   `json:"id"`
+	ID       *string  `json:"id"`
 	Status   string   `json:"status"`
 	Mode     string   `json:"mode"`
 	Sender   string   `json:"sender"`
@@ -103,8 +147,8 @@ func (s *MessagesService) Send(ctx context.Context, req *SendMessageRequest, opt
 
 // SendBatch sends one template to up to MaxBatchSize recipients. POST /v1/messages/batch
 func (s *MessagesService) SendBatch(ctx context.Context, req *BatchMessageRequest, opts ...SendOptions) (*BatchMessageResponse, error) {
-	if len(req.Messages) > MaxBatchSize {
-		return nil, &APIError{Code: "BATCH_TOO_LARGE", Message: "a batch accepts at most 1000 messages"}
+	if err := validateBatch(req); err != nil {
+		return nil, err
 	}
 	var out BatchMessageResponse
 	err := s.client.do(ctx, request{method: http.MethodPost, path: messagesBase + "/batch", body: req, headers: idempotencyHeaders(opts)}, &out)
@@ -143,4 +187,23 @@ func idempotencyHeaders(opts []SendOptions) map[string]string {
 		key = newUUIDv4()
 	}
 	return map[string]string{idempotencyKeyHeader: key}
+}
+
+func validateBatch(req *BatchMessageRequest) *APIError {
+	switch {
+	case req == nil:
+		return invalidBatch("batch request is required")
+	case strings.TrimSpace(req.TemplateName) == "":
+		return invalidBatch("templateName is required")
+	case len(req.Messages) == 0:
+		return invalidBatch("a batch needs at least one message")
+	case len(req.Messages) > MaxBatchSize:
+		return &APIError{Code: "BATCH_TOO_LARGE", Message: "a batch accepts at most 1000 messages"}
+	default:
+		return nil
+	}
+}
+
+func invalidBatch(message string) *APIError {
+	return &APIError{Code: codeInvalidRequest, Message: message}
 }

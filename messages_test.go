@@ -1,6 +1,7 @@
 package arara
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -21,7 +22,7 @@ func TestShouldSendMessageWithGeneratedIdempotencyKey(t *testing.T) {
 	if body["receiver"] != "whatsapp:+5511999998888" || body["templateName"] != "boas_vindas" {
 		t.Fatalf("unexpected body %v", body)
 	}
-	if resp.ID != "m1" || resp.Cost == nil || *resp.Cost != 0.35 {
+	if deref(resp.ID) != "m1" || resp.Cost == nil || *resp.Cost != 0.35 {
 		t.Fatalf("unexpected response %+v", resp)
 	}
 }
@@ -123,5 +124,53 @@ func TestShouldNotTreatBlankHeaderAsRetrySafe(t *testing.T) {
 	}
 	if !isRetrySafe(request{method: http.MethodPost, headers: map[string]string{"Idempotency-Key": "k"}}) {
 		t.Fatal("POST with key must be retry-safe")
+	}
+}
+
+func TestShouldValidateBatchLocally(t *testing.T) {
+	fs, c := newFakeServer(t)
+	cases := map[string]*BatchMessageRequest{
+		"nil":            nil,
+		"blank template": {TemplateName: "  ", Messages: []BatchMessageItem{{Receiver: "1"}}},
+		"empty messages": {TemplateName: "t"},
+	}
+	for name, req := range cases {
+		_, err := c.Messages.SendBatch(bg, req)
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) || apiErr.Code != "INVALID_REQUEST" {
+			t.Errorf("%s: expected INVALID_REQUEST, got %v", name, err)
+		}
+	}
+	if len(fs.requests) != 0 {
+		t.Fatal("invalid batches must not reach the API")
+	}
+}
+
+func TestShouldDecodeNullMessageID(t *testing.T) {
+	_, c := newFakeServer(t, fakeResponse{status: http.StatusAccepted, body: `{"id":null,"status":"QUEUED"}`})
+	resp, err := c.Messages.Send(bg, &SendMessageRequest{Receiver: "5511999998888", Body: "oi"})
+	if err != nil || resp.ID != nil {
+		t.Fatalf("expected nil id, got %+v %v", resp, err)
+	}
+}
+
+func TestShouldSendTypedCharge(t *testing.T) {
+	fs, c := newFakeServer(t, fakeResponse{status: http.StatusAccepted, body: `{"id":"m1"}`})
+	expires := int64(1790000000)
+	_, err := c.Messages.Send(bg, &SendMessageRequest{Receiver: "5511999998888", TemplateName: "cobranca", Charge: &ChargePayload{
+		ReferenceID: "pedido-1",
+		Items:       []ChargeItem{{Name: "Camisa", AmountCents: 4990, Quantity: 2}},
+		Pix:         &PixPayment{Code: "000201", Key: "a@b.com", KeyType: "EMAIL", MerchantName: "Loja"},
+		ExpiresAt:   &expires,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	charge, isMap := decodeBody(t, fs.only().Body)["charge"].(map[string]any)
+	if !isMap || charge["referenceId"] != "pedido-1" || charge["pix"].(map[string]any)["keyType"] != "EMAIL" || charge["expiresAt"] != float64(expires) {
+		t.Fatalf("unexpected charge %v", charge)
+	}
+	if _, has := charge["paymentLink"]; has {
+		t.Fatal("unset payment methods must be omitted")
 	}
 }

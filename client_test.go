@@ -25,7 +25,7 @@ func TestShouldGenerateValidUUIDv4(t *testing.T) {
 func TestShouldRetryGetOnServerError(t *testing.T) {
 	fs, c := newFakeServer(t, serverError(), ok(`{"id":"m1","status":"SENT"}`))
 	msg, err := c.Messages.Get(bg, "m1")
-	if err != nil || msg.ID != "m1" {
+	if err != nil || deref(msg.ID) != "m1" {
 		t.Fatalf("unexpected result %+v %v", msg, err)
 	}
 	if len(fs.requests) != 2 {
