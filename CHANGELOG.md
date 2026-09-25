@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.0 (2026-09-24)
+## [1.0.0] - 2026-09-24
 
 First tagged release, aligned with the AraraHQ API contract of 2026-09-24.
 
@@ -11,7 +11,9 @@ First tagged release, aligned with the AraraHQ API contract of 2026-09-24.
 - `OptOuts` resource (`/v1/opt-outs`).
 - `CampaignRequest.ScheduledAt`; `interactive`, `location` and `reaction` on `SendMessageRequest`; `MessageResponse.Reason`.
 - Generic `Paginated[T]` for `{data, pagination}` responses.
-- Typed `*APIError` with `IsPlanFeatureLocked`, `AsPlanFeatureLocked` and `IsAuthError`.
+- Typed `*APIError` (with `Unwrap`, so `errors.Is(err, context.Canceled)` works) and helpers `IsPlanFeatureLocked`, `AsPlanFeatureLocked`, `IsAuthError` (401), `IsForbidden` (403 without code, ambiguous) and `IsNotFound`.
+- Typed `ChargePayload` on `SendMessageRequest`; full `Template` fields (`availableForSending`, `unavailableReason`, `providerName`, `bodyPreview`, `structureJson`, `variablesSchema`, ...).
+- `CampaignListParams` for `Campaigns.List`; local validation of `Messages.SendBatch`.
 - `Version` constant, MIT LICENSE, test suite and release workflow.
 
 ### Changed
@@ -19,7 +21,9 @@ First tagged release, aligned with the AraraHQ API contract of 2026-09-24.
 - Retries only happen for GET requests and requests carrying an `Idempotency-Key`; other writes are never repeated.
 - `Templates.Get`, `GetStatus` and `Delete` take the template id (UUID), not the name.
 - `Templates.List` and `SmartLinks.List` return `*Paginated[T]` and accept page parameters.
-- `Error` renamed to `APIError`; 401 and 403 without an error code carry `AUTHENTICATION_ERROR`.
+- `Error` renamed to `APIError`. Responses without an envelope carry `AUTHENTICATION_ERROR` (401), `FORBIDDEN` (403) or `NOT_FOUND` (404).
+- `WithTimeout` no longer mutates a client passed to `WithHTTPClient` and works in any option order; `WithMaxRetries` clamps negatives to 0.
+- `MessageResponse.ID` and `TemplateStatus.Category` are nullable (`*string`); `SendMessageRequest.MediaURL` is deprecated.
 
 ### Removed
 - `Users` (`/users/me` is not reachable with an API key).

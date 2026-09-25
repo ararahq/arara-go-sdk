@@ -7,7 +7,7 @@ Zero external dependencies. Standard library only (`net/http`, `encoding/json`, 
 ## Install
 
 ```bash
-go get github.com/ararahq/arara-go-sdk@v1.0.0
+go get github.com/ararahq/arara-go-sdk@latest
 ```
 
 ## Quick start
@@ -38,7 +38,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	fmt.Printf("message %s status %s\n", resp.ID, resp.Status)
+	fmt.Printf("message %s status %s\n", *resp.ID, resp.Status)
 }
 ```
 
@@ -116,12 +116,15 @@ if errors.As(err, &apiErr) {
 if lock, ok := arara.AsPlanFeatureLocked(err); ok {
 	log.Printf("feature %s needs plan %s (current %s)", lock.Feature, lock.UpgradeTo, lock.CurrentPlan)
 }
-if arara.IsAuthError(err) {
-	log.Print("invalid key, missing permission or route not reachable by API key")
+if errors.Is(err, context.Canceled) {
+	log.Print("canceled by the caller")
 }
 ```
 
-`arara.IsPlanFeatureLocked(err)` is the boolean shortcut for `403 PLAN_FEATURE_LOCKED`. A 401, or a 403 without an error code, carries `Code == "AUTHENTICATION_ERROR"`.
+- `arara.IsPlanFeatureLocked(err)`: `403 PLAN_FEATURE_LOCKED`.
+- `arara.IsAuthError(err)`: 401, the key was rejected.
+- `arara.IsForbidden(err)`: 403 without an error code (`Code == "FORBIDDEN"`). Ambiguous by design of the API: a key without permission for the route, or a resource of another organization (`GET /v1/messages/{id}` answers an empty 403).
+- `arara.IsNotFound(err)`: 404 (`Code == "NOT_FOUND"` when the body is empty).
 
 ## License
 
