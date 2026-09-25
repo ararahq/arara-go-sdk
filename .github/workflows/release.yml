@@ -14,6 +14,7 @@ concurrency:
 
 jobs:
   release:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,6 +43,19 @@ jobs:
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
+      - name: Require version above latest tag
+        if: steps.tag.outputs.exists == 'false'
+        run: |
+          new="${{ steps.version.outputs.tag }}"
+          latest=$(git tag -l 'v*' | sort -V | tail -1)
+          if [ -n "$latest" ] && [ "$(printf '%s\n%s\n' "$latest" "$new" | sort -V | tail -1)" != "$new" ]; then
+            echo "Version $new is not above latest tag $latest" && exit 1
+          fi
+      - name: Require changelog entry
+        if: steps.tag.outputs.exists == 'false'
+        run: |
+          version="${{ steps.version.outputs.tag }}"
+          grep -qF "## [${version#v}]" CHANGELOG.md || (echo "CHANGELOG.md has no '## [${version#v}]' entry" && exit 1)
       - name: Create tag and release
         if: steps.tag.outputs.exists == 'false'
         env:
