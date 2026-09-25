@@ -63,7 +63,7 @@ func (s *ConversationsService) Messages(ctx context.Context, conversationID stri
 		"size": {strconv.Itoa(defaultSize(size, 50))},
 	}
 	var out map[string]any
-	err := s.client.do(ctx, request{method: http.MethodGet, path: "/v1/conversations/" + conversationID + "/messages", query: q}, &out)
+	err := s.client.do(ctx, request{method: http.MethodGet, path: "/v1/conversations/" + url.PathEscape(conversationID) + "/messages", query: q}, &out)
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +85,7 @@ func (s *ConversationsService) UpdateStatus(ctx context.Context, conversationID,
 	var out map[string]any
 	err := s.client.do(ctx, request{
 		method: http.MethodPatch,
-		path:   "/v1/conversations/" + conversationID + "/status",
+		path:   "/v1/conversations/" + url.PathEscape(conversationID) + "/status",
 		body:   map[string]string{"status": status},
 	}, &out)
 	if err != nil {

@@ -186,7 +186,7 @@ func (s *ContactsService) ListTags(ctx context.Context) (map[string]any, error) 
 // Get retrieves a contact by phone. GET /v1/contacts/{phone}
 func (s *ContactsService) Get(ctx context.Context, phone string) (*ContactResponse, error) {
 	var out ContactResponse
-	err := s.client.do(ctx, request{method: http.MethodGet, path: "/v1/contacts/" + phone}, &out)
+	err := s.client.do(ctx, request{method: http.MethodGet, path: "/v1/contacts/" + url.PathEscape(phone)}, &out)
 	if err != nil {
 		return nil, err
 	}
@@ -196,7 +196,7 @@ func (s *ContactsService) Get(ctx context.Context, phone string) (*ContactRespon
 // Update updates a contact by phone. PATCH /v1/contacts/{phone}
 func (s *ContactsService) Update(ctx context.Context, phone string, patch *ContactPatchRequest) (*ContactResponse, error) {
 	var out ContactResponse
-	err := s.client.do(ctx, request{method: http.MethodPatch, path: "/v1/contacts/" + phone, body: patch}, &out)
+	err := s.client.do(ctx, request{method: http.MethodPatch, path: "/v1/contacts/" + url.PathEscape(phone), body: patch}, &out)
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +207,7 @@ func (s *ContactsService) Update(ctx context.Context, phone string, patch *Conta
 func (s *ContactsService) Messages(ctx context.Context, phone string, limit int) (*ContactMessagesResponse, error) {
 	q := url.Values{"limit": {strconv.Itoa(defaultSize(limit, 30))}}
 	var out ContactMessagesResponse
-	err := s.client.do(ctx, request{method: http.MethodGet, path: "/v1/contacts/" + phone + "/messages", query: q}, &out)
+	err := s.client.do(ctx, request{method: http.MethodGet, path: "/v1/contacts/" + url.PathEscape(phone) + "/messages", query: q}, &out)
 	if err != nil {
 		return nil, err
 	}

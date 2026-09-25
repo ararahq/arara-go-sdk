@@ -3,6 +3,7 @@ package arara
 import (
 	"context"
 	"net/http"
+	"net/url"
 )
 
 // SmartLinksService handles the /v1/smart-links/whatsapp resource.
@@ -38,7 +39,10 @@ type WhatsAppSmartLinkResponse struct {
 	Clicks      int64   `json:"clicks"`
 }
 
-const smartLinksBase = "/v1/smart-links/whatsapp"
+const (
+	smartLinksBase            = "/v1/smart-links/whatsapp"
+	defaultSmartLinksPageSize = 50
+)
 
 // Create creates a WhatsApp smart link. POST /v1/smart-links/whatsapp
 func (s *SmartLinksService) Create(ctx context.Context, req *CreateWhatsAppSmartLinkRequest) (*WhatsAppSmartLinkResponse, error) {
@@ -53,27 +57,27 @@ func (s *SmartLinksService) Create(ctx context.Context, req *CreateWhatsAppSmart
 // Update updates a WhatsApp smart link. PUT /v1/smart-links/whatsapp/{id}
 func (s *SmartLinksService) Update(ctx context.Context, id string, req *UpdateWhatsAppSmartLinkRequest) (*WhatsAppSmartLinkResponse, error) {
 	var out WhatsAppSmartLinkResponse
-	err := s.client.do(ctx, request{method: http.MethodPut, path: smartLinksBase + "/" + id, body: req}, &out)
+	err := s.client.do(ctx, request{method: http.MethodPut, path: smartLinksBase + "/" + url.PathEscape(id), body: req}, &out)
 	if err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
 
-// List lists WhatsApp smart links. GET /v1/smart-links/whatsapp
-func (s *SmartLinksService) List(ctx context.Context) ([]WhatsAppSmartLinkResponse, error) {
-	var out []WhatsAppSmartLinkResponse
-	err := s.client.do(ctx, request{method: http.MethodGet, path: smartLinksBase}, &out)
+// List lists WhatsApp smart links, paginated. GET /v1/smart-links/whatsapp
+func (s *SmartLinksService) List(ctx context.Context, params PageParams) (*Paginated[WhatsAppSmartLinkResponse], error) {
+	var out Paginated[WhatsAppSmartLinkResponse]
+	err := s.client.do(ctx, request{method: http.MethodGet, path: smartLinksBase, query: params.values(defaultSmartLinksPageSize)}, &out)
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	return &out, nil
 }
 
 // Stats returns smart link click stats. GET /v1/smart-links/whatsapp/{id}/stats
 func (s *SmartLinksService) Stats(ctx context.Context, id string) (map[string]any, error) {
 	var out map[string]any
-	err := s.client.do(ctx, request{method: http.MethodGet, path: smartLinksBase + "/" + id + "/stats"}, &out)
+	err := s.client.do(ctx, request{method: http.MethodGet, path: smartLinksBase + "/" + url.PathEscape(id) + "/stats"}, &out)
 	if err != nil {
 		return nil, err
 	}

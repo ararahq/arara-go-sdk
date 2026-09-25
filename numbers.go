@@ -3,6 +3,7 @@ package arara
 import (
 	"context"
 	"net/http"
+	"net/url"
 )
 
 // NumbersService handles the /v1/organizations/me/numbers resource.
@@ -79,7 +80,7 @@ func (s *NumbersService) List(ctx context.Context) (*NumbersResponseDTO, error) 
 // Update updates a number. PATCH /v1/organizations/me/numbers/{id}
 func (s *NumbersService) Update(ctx context.Context, id string, req *UpdateNumberRequest) (map[string]any, error) {
 	var out map[string]any
-	err := s.client.do(ctx, request{method: http.MethodPatch, path: numbersBase + "/" + id, body: req}, &out)
+	err := s.client.do(ctx, request{method: http.MethodPatch, path: numbersBase + "/" + url.PathEscape(id), body: req}, &out)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +90,7 @@ func (s *NumbersService) Update(ctx context.Context, id string, req *UpdateNumbe
 // Delete deactivates a number. DELETE /v1/organizations/me/numbers/{id}
 func (s *NumbersService) Delete(ctx context.Context, id string) (map[string]any, error) {
 	var out map[string]any
-	err := s.client.do(ctx, request{method: http.MethodDelete, path: numbersBase + "/" + id}, &out)
+	err := s.client.do(ctx, request{method: http.MethodDelete, path: numbersBase + "/" + url.PathEscape(id)}, &out)
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +120,7 @@ func (s *NumbersService) ListRequests(ctx context.Context) ([]map[string]any, er
 // Sync syncs a number's health from the provider. POST /v1/organizations/me/numbers/{id}/sync
 func (s *NumbersService) Sync(ctx context.Context, id string) (map[string]any, error) {
 	var out map[string]any
-	err := s.client.do(ctx, request{method: http.MethodPost, path: numbersBase + "/" + id + "/sync"}, &out)
+	err := s.client.do(ctx, request{method: http.MethodPost, path: numbersBase + "/" + url.PathEscape(id) + "/sync"}, &out)
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +130,7 @@ func (s *NumbersService) Sync(ctx context.Context, id string) (map[string]any, e
 // Warming returns warming recommendations for a number. GET /v1/organizations/me/numbers/{id}/warming
 func (s *NumbersService) Warming(ctx context.Context, id string) (map[string]any, error) {
 	var out map[string]any
-	err := s.client.do(ctx, request{method: http.MethodGet, path: numbersBase + "/" + id + "/warming"}, &out)
+	err := s.client.do(ctx, request{method: http.MethodGet, path: numbersBase + "/" + url.PathEscape(id) + "/warming"}, &out)
 	if err != nil {
 		return nil, err
 	}
