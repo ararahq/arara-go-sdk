@@ -38,9 +38,13 @@ func main() {
 		log.Fatal(err)
 	}
 
-	fmt.Printf("message %s status %s\n", *resp.ID, resp.Status)
+	if resp.ID != nil {
+		fmt.Printf("message %s status %s\n", *resp.ID, resp.Status)
+	}
 }
 ```
+
+`MessageResponse.ID`, `MessageResponse.Reason` and `TemplateStatus.Category` are `*string` because the API may return `null`; check for nil before dereferencing.
 
 `Receiver` accepts `whatsapp:+5511...`, `+5511...` or digits only; the API validates it.
 
