@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.0.1] - 2026-11-15
+
+### Changed
+- README aligned with the current AraraHQ description. No code changes.
+
 ## [1.0.0] - 2026-09-24
 
 First tagged release, aligned with the AraraHQ API contract of 2026-09-24.

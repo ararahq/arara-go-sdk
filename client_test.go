@@ -126,7 +126,7 @@ func TestShouldFailDecodeOnInvalidJSON(t *testing.T) {
 }
 
 func TestShouldExposeVersion(t *testing.T) {
-	if Version != "1.0.0" {
+	if Version != "1.0.1" {
 		t.Fatalf("unexpected version %s", Version)
 	}
 }
