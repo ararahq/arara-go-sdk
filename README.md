@@ -1,6 +1,8 @@
 # arara-go-sdk
 
-Official Go SDK for the [AraraHQ](https://ararahq.com) API — the best WhatsApp API for Brazilian developers.
+Official Go SDK for the [AraraHQ](https://ararahq.com) API.
+
+AraraHQ: WhatsApp for Brazilian companies. Team inbox with AI, campaigns and systems connected through the API.
 
 Zero external dependencies. Standard library only (`net/http`, `encoding/json`, `context`). Requires Go 1.22+.
 
